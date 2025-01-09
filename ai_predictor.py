@@ -67,8 +67,16 @@ def train_model(X_train, y_train):
 
 # Step 4: Generate Future Predictions
 def generate_future_predictions(model, df, scaler, weeks=104):
+    # Use the last 60 rows for the initial input
     future_data = df.iloc[-60:].copy()
     predictions = []
+    
+    # Calculate minimum historical price
+    min_historical_price = df['close'].min()
+    
+    # Initialize the starting date
+    last_date = df['timestamp'].iloc[-1]
+
     for week in range(weeks):
         # Prepare the input data
         scaled_data = scaler.transform(future_data[['open', 'high', 'low', 'close', 'volume', 'pct_change', 'ma_7', 'ma_30']])
@@ -78,38 +86,42 @@ def generate_future_predictions(model, df, scaler, weeks=104):
         next_price_scaled = model.predict(X_input)[0][0]
         next_price = scaler.inverse_transform([[0, 0, 0, next_price_scaled, 0, 0, 0, 0]])[0][3]
 
-        # Add some randomness (for example, volatility) to the price prediction
-        volatility = np.random.normal(0, 0.02)  # 2% random volatility
-        next_price += next_price * volatility  # Apply volatility to next price
-        
-        # Ensure that the price doesn't go negative (if it does, set it to a small positive value)
-        next_price = max(next_price, 0.01)
+        # Add some randomness (e.g., volatility) to the price prediction
+        volatility = np.random.normal(-0.02, 0.04)  # Centered around 0% with a wider range
+        next_price += next_price * volatility
+
+        # Allow price to go below historical minimum but within a reasonable range
+        if next_price < 0.9 * min_historical_price:
+            next_price = max(next_price, 0.9 * min_historical_price)
 
         # Create next row with updated values
         next_row = future_data.iloc[-1:].copy()
         next_row['open'] = next_row['close']
         next_row['close'] = next_price
-        next_row['volume'] = next_row['volume'] * (1 + np.random.normal(0, 0.01))  # Introduce small variability in volume
-        next_row['timestamp'] += timedelta(days=7)  # Increment by one week
-        
-        # Append the new row to future_data
+        next_row['volume'] = next_row['volume'] * (1 + np.random.normal(0, 0.01))  # Add slight variability to volume
+        next_row['timestamp'] = last_date + timedelta(days=7 * (week + 1))  # Increment date by one week
+
+        # Append the new row to `future_data`
         future_data = pd.concat([future_data, next_row], ignore_index=True)
-        
-        # Update pct_change dynamically
+
+        # Update `pct_change` dynamically
         future_data['pct_change'].iloc[-1] = (next_price - next_row['open']) / next_row['open']
-        
-        # Update moving averages dynamically if there are enough data points
+
+        # Update moving averages dynamically
         if len(future_data) >= 7:
             future_data['ma_7'].iloc[-1] = future_data['close'].rolling(7).mean().iloc[-1]
         if len(future_data) >= 30:
             future_data['ma_30'].iloc[-1] = future_data['close'].rolling(30).mean().iloc[-1]
-        
+
+        # Collect prediction data
         predictions.append({'date': next_row['timestamp'].values[0], 'price': next_price})
-        
+
         # Debugging print statement
         print(f"Week {week + 1}: Predicted price = {next_price}")
-    
+
     return pd.DataFrame(predictions)
+
+
 
 # Step 5: Plot Predictions
 def plot_predictions(df, predictions):
